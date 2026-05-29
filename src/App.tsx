@@ -1,0 +1,518 @@
+import React, { useState, useEffect } from 'react';
+import { PublicClientApplication } from '@azure/msal-browser';
+import type { AccountInfo } from '@azure/msal-browser';
+import { MsalProvider, useMsal } from '@azure/msal-react';
+import { loginRequest } from './authConfig';
+import { 
+  getDB, 
+  isM365Mode, 
+  getM365Config, 
+  saveM365Config,
+  registerTokenProvider, 
+  initializeDB 
+} from './services/storeService';
+import type { UserProfile } from './types';
+import { RoleSwitcher, MOCK_PROFILES } from './components/RoleSwitcher';
+import { RequesterDashboard } from './components/RequesterDashboard';
+import { ApproverDashboard } from './components/ApproverDashboard';
+import { StorekeeperDashboard } from './components/StorekeeperDashboard';
+import { AdminDashboard } from './components/AdminDashboard';
+import { 
+  ShoppingBag, 
+  Sun, 
+  Moon, 
+  TrendingUp, 
+  AlertCircle, 
+  CheckCircle2, 
+  Clock,
+  Grid
+} from 'lucide-react';
+
+// MSAL Instance is passed as a prop from main.tsx
+
+// Inner App with MSAL Context
+const StoreAppContent: React.FC = () => {
+  const [activeProfile, setActiveProfile] = useState<UserProfile>(MOCK_PROFILES[0]);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [db, setDb] = useState(getDB());
+  const [m365User, setM365User] = useState<string | null>(null);
+  const [m365UserRoles, setM365UserRoles] = useState<string[]>(['Requester']);
+  const [simulatedEmails, setSimulatedEmails] = useState<{ id: string; to: string; subject: string; htmlContent: string; timestamp: string }[]>([]);
+
+  // Statistics
+  const [stats, setStats] = useState({
+    pendingCount: 0,
+    lowStockCount: 0,
+    completedCount: 0,
+    totalValue: 0
+  });
+
+  const { instance, accounts } = useMsal();
+  const isM365 = isM365Mode();
+
+  useEffect(() => {
+    document.body.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  // Poll simulated emails in offline mode
+  useEffect(() => {
+    if (!isM365) {
+      const interval = setInterval(() => {
+        const stored = localStorage.getItem('m365_simulated_emails');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed.length !== simulatedEmails.length) {
+            setSimulatedEmails(parsed);
+          }
+        }
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [isM365, simulatedEmails.length]);
+
+  useEffect(() => {
+    // Register the MSAL token acquisition if M365 is enabled
+    if (isM365 && accounts.length > 0) {
+      const activeAccount = accounts[0];
+      setM365User(activeAccount.username);
+      
+      const tokenAcquisition = async () => {
+        try {
+          const response = await instance.acquireTokenSilent({
+            ...loginRequest,
+            account: activeAccount
+          });
+          return response.accessToken;
+        } catch (e) {
+          // If silent fails, fall back to redirect
+          await instance.acquireTokenRedirect(loginRequest);
+          return "";
+        }
+      };
+
+      registerTokenProvider(tokenAcquisition);
+      initializeDB();
+      setDb(getDB());
+      
+      // Load user profile and resolve role dynamically
+      resolveM365UserRole(activeAccount);
+    } else {
+      // Offline mode
+      initializeDB();
+      setDb(getDB());
+    }
+  }, [isM365, accounts, instance]);
+
+  useEffect(() => {
+    loadStats();
+  }, [db, activeProfile]);
+
+  const loadStats = async () => {
+    try {
+      const allReqs = await db.getRequests();
+      const allItems = await db.getItems();
+      
+      // Calculate statistics
+      const pending = allReqs.filter(r => r.status.startsWith('Pending_')).length;
+      const lowStock = allItems.filter(i => i.stockOnHand <= i.reorderLevel).length;
+      const completed = allReqs.filter(r => r.status === 'Completed').length;
+      
+      // Get total amount issued/processed for requester or global based on admin
+      let totalAmount = 0;
+      if (activeProfile.role === 'Admin' || activeProfile.role === 'Storekeeper' || activeProfile.role === 'Finance') {
+        totalAmount = allReqs
+          .filter(r => r.status === 'Completed')
+          .reduce((sum, r) => sum + r.totalAmount, 0);
+      } else {
+        totalAmount = allReqs
+          .filter(r => r.requesterEmail.toLowerCase() === activeProfile.email.toLowerCase() && r.status === 'Completed')
+          .reduce((sum, r) => sum + r.totalAmount, 0);
+      }
+
+      setStats({
+        pendingCount: pending,
+        lowStockCount: lowStock,
+        completedCount: completed,
+        totalValue: totalAmount
+      });
+    } catch (e) {
+      console.error("Error loading statistics", e);
+    }
+  };
+
+  const resolveM365UserRole = async (account: AccountInfo) => {
+    const activeDb = getDB();
+    const email = account.username.toLowerCase();
+    const roles: ('Requester' | 'HOD' | 'Finance' | 'Storekeeper' | 'Admin')[] = ['Requester'];
+
+    let divisions: any[] = [];
+    try {
+      divisions = await activeDb.getDivisions();
+    } catch (e) {
+      console.warn("Failed to fetch divisions for role resolution, lists may not be provisioned yet.", e);
+    }
+
+    // 1. Check if HOD
+    const isHOD = divisions.some(d => d.hodEmail?.toLowerCase() === email);
+    if (isHOD) roles.push('HOD');
+
+    // 2. Check if Finance Head
+    const isFinance = divisions.some(d => d.financeEmail?.toLowerCase() === email);
+    if (isFinance) roles.push('Finance');
+
+    // 3. Check if Storekeeper
+    if (email.includes('storekeeper') || email.includes('keeper') || email === 'sam.keeper@company.com') {
+      roles.push('Storekeeper');
+    }
+
+    // 4. Check if Admin
+    let adminsList: any[] = [];
+    try {
+      adminsList = await activeDb.getAdmins();
+    } catch (e) {
+      console.warn("Failed to fetch admins for role resolution, lists may not be provisioned yet.", e);
+    }
+
+    const isAdmin = adminsList.some(a => a.email?.toLowerCase() === email);
+    if (isAdmin || email.includes('admin') || email === 'admin@company.com' || email === 'darshana@aatsl.lk') {
+      roles.push('Admin');
+    }
+
+    setM365UserRoles(roles);
+
+    // Determine active starting role (highest priority) or preserve currently selected role if valid
+    let activeRole = activeProfile.role;
+    if (!roles.includes(activeRole as any) || activeProfile.email.toLowerCase() !== email) {
+      activeRole = 'Requester';
+      if (roles.includes('Admin')) activeRole = 'Admin';
+      else if (roles.includes('Storekeeper')) activeRole = 'Storekeeper';
+      else if (roles.includes('Finance')) activeRole = 'Finance';
+      else if (roles.includes('HOD')) activeRole = 'HOD';
+    }
+
+    setActiveProfile({
+      name: account.name || account.username,
+      email: account.username,
+      role: activeRole
+    });
+  };
+
+  const handleProfileChange = (profile: UserProfile) => {
+    setActiveProfile(profile);
+    setActiveTabOverride('auto'); // Reset tab override to match active role view
+  };
+
+  const handleM365Login = async () => {
+    const config = getM365Config();
+    if (!config.isEnabled || !config.clientId || config.clientId === '00000000-0000-0000-0000-000000000000' || config.clientId === 'placeholder') {
+      alert("Microsoft 365 integration is not configured. Please go to the 'Admin' -> 'M365 Setup' tab, check 'Enable M365 SharePoint Graph Backend Connection', enter your Client ID, Tenant ID, and Site URL, then save the configuration.");
+      return;
+    }
+    try {
+      await instance.loginRedirect(loginRequest);
+    } catch (e) {
+      console.error("Login redirect failed", e);
+    }
+  };
+
+  const handleM365Logout = async () => {
+    try {
+      await instance.logoutRedirect();
+      setM365User(null);
+      // Reset local profile
+      setActiveProfile(MOCK_PROFILES[0]);
+    } catch (e) {
+      console.error("Logout redirect failed", e);
+    }
+  };
+
+  const handleConfigChange = () => {
+    // Config was updated, refresh database client selection
+    initializeDB();
+    setDb(getDB());
+    // reload the page to apply MSAL configurations correctly
+    window.location.reload();
+  };
+
+  const handleSwitchToDemoMode = () => {
+    const config = getM365Config();
+    config.isEnabled = false;
+    saveM365Config(config);
+    window.location.reload();
+  };
+
+  const toggleTheme = () => {
+    setTheme(theme === 'dark' ? 'light' : 'dark');
+  };
+
+  // Determine active view component to render
+  const renderDashboard = () => {
+    switch (activeProfile.role) {
+      case 'Requester':
+        return <RequesterDashboard db={db} profile={activeProfile} />;
+      case 'HOD':
+      case 'Finance':
+        return <ApproverDashboard db={db} profile={activeProfile} />;
+      case 'Storekeeper':
+        return <StorekeeperDashboard db={db} profile={activeProfile} />;
+      case 'Admin':
+        return <AdminDashboard db={db} onConfigChange={handleConfigChange} />;
+      default:
+        return <RequesterDashboard db={db} profile={activeProfile} />;
+    }
+  };
+
+  // Quick navigation tab controls when acting as admin or multiple roles
+  const hasApproverPrivilege = activeProfile.role === 'HOD' || activeProfile.role === 'Finance' || activeProfile.role === 'Admin';
+  const hasStorekeeperPrivilege = activeProfile.role === 'Storekeeper' || activeProfile.role === 'Admin';
+  const hasAdminPrivilege = activeProfile.role === 'Admin';
+
+  const [activeTabOverride, setActiveTabOverride] = useState<string>('auto');
+
+  const getEffectiveView = () => {
+    if (activeTabOverride === 'auto') {
+      return renderDashboard();
+    }
+    switch (activeTabOverride) {
+      case 'requester': return <RequesterDashboard db={db} profile={activeProfile} />;
+      case 'approver': return <ApproverDashboard db={db} profile={activeProfile} />;
+      case 'storekeeper': return <StorekeeperDashboard db={db} profile={activeProfile} />;
+      case 'admin': return <AdminDashboard db={db} onConfigChange={handleConfigChange} />;
+      default: return renderDashboard();
+    }
+  };
+
+  return (
+    <div className="app-container">
+      {/* Dynamic top role-switcher for offline review */}
+      <RoleSwitcher 
+        currentProfile={activeProfile} 
+        onProfileChange={handleProfileChange}
+        isM365={isM365}
+        onLoginClick={handleM365Login}
+        onLogoutClick={handleM365Logout}
+        m365User={m365User}
+        m365UserRoles={m365UserRoles}
+      />
+
+      {/* Main Header */}
+      <header className="app-header">
+        <div className="logo-section">
+          <ShoppingBag size={28} />
+          <div>
+            <h1 className="logo-text gradient-text">Storekeeper</h1>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 500, display: 'block', marginTop: '-3px' }}>
+              M365 Store Request Portal
+            </span>
+          </div>
+        </div>
+
+        <div className="header-actions">
+          {/* Dashboard tabs switcher if the role has permission */}
+          {(hasApproverPrivilege || hasStorekeeperPrivilege) && (
+            <div className="tabs-navigation" style={{ background: 'rgba(0,0,0,0.1)' }}>
+              <button 
+                className={`tab-btn ${activeTabOverride === 'auto' ? 'active' : ''}`}
+                onClick={() => setActiveTabOverride('auto')}
+                style={{ fontSize: '12px', padding: '6px 12px' }}
+              >
+                Auto ({activeProfile.role})
+              </button>
+              <button 
+                className={`tab-btn ${activeTabOverride === 'requester' ? 'active' : ''}`}
+                onClick={() => setActiveTabOverride('requester')}
+                style={{ fontSize: '12px', padding: '6px 12px' }}
+              >
+                Request
+              </button>
+              {hasApproverPrivilege && (
+                <button 
+                  className={`tab-btn ${activeTabOverride === 'approver' ? 'active' : ''}`}
+                  onClick={() => setActiveTabOverride('approver')}
+                  style={{ fontSize: '12px', padding: '6px 12px' }}
+                >
+                  Approve
+                </button>
+              )}
+              {hasStorekeeperPrivilege && (
+                <button 
+                  className={`tab-btn ${activeTabOverride === 'storekeeper' ? 'active' : ''}`}
+                  onClick={() => setActiveTabOverride('storekeeper')}
+                  style={{ fontSize: '12px', padding: '6px 12px' }}
+                >
+                  Storekeeper
+                </button>
+              )}
+              {hasAdminPrivilege && (
+                <button 
+                  className={`tab-btn ${activeTabOverride === 'admin' ? 'active' : ''}`}
+                  onClick={() => setActiveTabOverride('admin')}
+                  style={{ fontSize: '12px', padding: '6px 12px' }}
+                >
+                  Admin
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Theme Toggle */}
+          <button className="btn btn-secondary" style={{ padding: '8px' }} onClick={toggleTheme} title="Toggle Theme">
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+        </div>
+      </header>
+
+      {/* Main Content Area */}
+      <main className="main-content">
+        
+        {/* Connection Notice for M365 */}
+        {isM365 && accounts.length === 0 && (
+          <div className="glass-panel text-center" style={{ padding: '60px 40px', maxWidth: '600px', margin: '40px auto' }}>
+            <Grid size={48} className="text-secondary pulse" style={{ margin: '0 auto 20px' }} />
+            <h2 className="margin-bottom-md gradient-text">Microsoft M365 Authorization Required</h2>
+            <p className="text-secondary margin-bottom-md" style={{ lineHeight: 1.6 }}>
+              The application is configured to connect to your corporate SharePoint Lists. Please sign in with your Microsoft 365 Work or School account to authorize operations.
+            </p>
+            <div className="flex gap-sm justify-center margin-top-md" style={{ flexWrap: 'wrap' }}>
+              <button className="btn btn-primary btn-accent" onClick={handleM365Login} style={{ padding: '10px 24px' }}>
+                Sign In with Microsoft 365
+              </button>
+              <button 
+                type="button"
+                className="btn btn-secondary" 
+                onClick={handleSwitchToDemoMode} 
+                style={{ padding: '10px 24px', background: 'rgba(255,255,255,0.05)' }}
+              >
+                Switch back to Offline Demo Mode
+              </button>
+            </div>
+          </div>
+        )}
+
+        {(!isM365 || accounts.length > 0) && (
+          <>
+            {/* Quick Metrics Grid */}
+            <div className="stats-grid">
+              <div className="glass-panel stat-card">
+                <div className="stat-header">
+                  <span>Pending Tasks</span>
+                  <Clock size={16} className="text-secondary" />
+                </div>
+                <div className="stat-value">{stats.pendingCount}</div>
+                <div className="stat-desc">Requests awaiting decision</div>
+              </div>
+
+              <div className="glass-panel stat-card">
+                <div className="stat-header">
+                  <span>Low Stock Items</span>
+                  <AlertCircle size={16} className="text-declined" style={{ color: 'var(--color-declined)' }} />
+                </div>
+                <div className="stat-value" style={{ color: stats.lowStockCount > 0 ? 'var(--color-declined)' : 'inherit' }}>
+                  {stats.lowStockCount}
+                </div>
+                <div className="stat-desc">Catalog items near threshold</div>
+              </div>
+
+              <div className="glass-panel stat-card">
+                <div className="stat-header">
+                  <span>Completed Requests</span>
+                  <CheckCircle2 size={16} className="text-completed" style={{ color: 'var(--color-completed)' }} />
+                </div>
+                <div className="stat-value">{stats.completedCount}</div>
+                <div className="stat-desc">Fulfilled requests history</div>
+              </div>
+
+              <div className="glass-panel stat-card">
+                <div className="stat-header">
+                  <span>{hasAdminPrivilege ? 'Total Dispatched Value' : 'My Issued Value'}</span>
+                  <TrendingUp size={16} className="text-completed" />
+                </div>
+                <div className="stat-value gradient-text">LKR {stats.totalValue.toLocaleString()}</div>
+                <div className="stat-desc">Aggregate value of completed issues</div>
+              </div>
+            </div>
+
+            {/* Active view component */}
+            <div className="main-dashboard-view">
+              {getEffectiveView()}
+            </div>
+          </>
+        )}
+      </main>
+
+      {/* Floating Notification Center for Simulated Emails */}
+      {simulatedEmails.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          zIndex: 1000,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          maxWidth: '380px',
+          width: '90%'
+        }}>
+          {simulatedEmails.slice(-3).reverse().map(email => (
+            <div key={email.id} className="glass-panel" style={{
+              background: 'rgba(15, 23, 42, 0.95)',
+              border: '1px solid var(--secondary)',
+              boxShadow: 'var(--shadow-lg)',
+              padding: '16px',
+              borderRadius: '8px',
+              color: '#fff'
+            }}>
+              <div className="flex justify-between align-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '8px', marginBottom: '8px' }}>
+                <strong style={{ color: 'var(--secondary)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  ✉️ Simulated Email Sent
+                </strong>
+                <button 
+                  style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '16px', fontWeight: 'bold' }}
+                  onClick={() => {
+                    const updated = simulatedEmails.filter(e => e.id !== email.id);
+                    setSimulatedEmails(updated);
+                    localStorage.setItem('m365_simulated_emails', JSON.stringify(updated));
+                  }}
+                >
+                  &times;
+                </button>
+              </div>
+              <div style={{ fontSize: '12px', lineHeight: 1.4 }}>
+                <div style={{ marginBottom: '2px' }}><strong>To:</strong> <code style={{ color: 'var(--secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 4px', borderRadius: '3px' }}>{email.to}</code></div>
+                <div style={{ marginBottom: '6px' }}><strong>Subject:</strong> <span style={{ fontWeight: 500 }}>{email.subject}</span></div>
+                <div 
+                  style={{ 
+                    padding: '8px', 
+                    background: 'rgba(0,0,0,0.3)', 
+                    borderRadius: '4px', 
+                    fontSize: '11px',
+                    maxHeight: '100px',
+                    overflowY: 'auto',
+                    borderLeft: '2px solid var(--primary)',
+                    color: 'rgba(255,255,255,0.85)'
+                  }}
+                  dangerouslySetInnerHTML={{ __html: email.htmlContent }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+interface AppProps {
+  msalInstance: PublicClientApplication;
+}
+
+// Top Root App with MSAL Provider Wrapper
+export const App: React.FC<AppProps> = ({ msalInstance }) => {
+  return (
+    <MsalProvider instance={msalInstance}>
+      <StoreAppContent />
+    </MsalProvider>
+  );
+};
+
+export default App;
