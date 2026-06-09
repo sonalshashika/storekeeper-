@@ -11,8 +11,6 @@ import type {
   AuditEntry,
   SystemAdmin
 } from '../types';
-import { SEED_ITEMS, SEED_DIVISIONS } from './seedData';
-
 export class GraphStoreDB implements StoreDB {
   private graphClient: Client;
   private siteId: string;
@@ -93,6 +91,26 @@ export class GraphStoreDB implements StoreDB {
       }
     });
     return { ...item, id: response.id };
+  }
+
+  async seedDefaultData(): Promise<void> {
+    // Insert Items
+    const SEED_ITEMS: any[] = [];
+    for (const item of SEED_ITEMS) {
+      await this.graphClient.api(`/sites/${this.siteId}/lists/Store_ItemCatalog/items`)
+        .post({
+          fields: {
+            Title: item.itemCode,
+            ItemName: item.name,
+            Category: item.category,
+            Unit: item.unit,
+            ReorderLevel: item.reorderLevel,
+            StockOnHand: item.stockOnHand,
+            UnitPrice: item.unitPrice,
+            Status: item.status
+          }
+        });
+    }
   }
 
   async updateItem(itemId: string, item: Partial<ItemMaster>): Promise<void> {
@@ -546,28 +564,7 @@ export class GraphStoreDB implements StoreDB {
   }
 
   async seed(): Promise<void> {
-    // 1. Seed Item Master if empty
-    const currentItems = await this.getItems();
-    if (currentItems.length === 0) {
-      console.log("Seeding default items to SharePoint...");
-      for (const item of SEED_ITEMS) {
-        await this.createItem(item);
-      }
-    } else {
-      console.log("Item catalog is already populated, skipping item seeding.");
-    }
-
-    // 2. Seed Division Matrix if empty
-    const currentDivisions = await this.getDivisions();
-    if (currentDivisions.length === 0) {
-      console.log("Seeding default divisions to SharePoint...");
-      for (const div of SEED_DIVISIONS) {
-        await this.createDivision(div);
-      }
-    } else {
-      console.log("Division matrix is already populated, skipping division seeding.");
-    }
-
+    console.log("Seeding removed since test data is no longer needed.");
     // 3. Seed Admins if empty
     try {
       const currentAdmins = await this.getAdmins();
@@ -576,8 +573,8 @@ export class GraphStoreDB implements StoreDB {
         await this.createAdmin({ name: 'System Admin', email: 'admin@company.com' });
         await this.createAdmin({ name: 'Darshana', email: 'darshana@aatsl.lk' });
       }
-    } catch (err) {
-      console.error("Failed to seed admins", err);
+    } catch (e) {
+      console.error("Could not seed admins", e);
     }
   }
 

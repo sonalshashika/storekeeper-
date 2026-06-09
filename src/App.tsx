@@ -7,11 +7,10 @@ import {
   getDB, 
   isM365Mode, 
   getM365Config, 
-  saveM365Config,
   registerTokenProvider, 
   initializeDB 
 } from './services/storeService';
-import type { UserProfile } from './types';
+import type { UserProfile, StoreRequest, ItemMaster } from './types';
 import { RoleSwitcher } from './components/RoleSwitcher';
 import { RequesterDashboard } from './components/RequesterDashboard';
 import { ApproverDashboard } from './components/ApproverDashboard';
@@ -65,7 +64,7 @@ const StoreAppContent: React.FC = () => {
             ...loginRequest,
             account: activeAccount
           });
-          return response.accessToken;
+          return response.accessToken || "";
         } catch (e) {
           // If silent fails, fall back to redirect
           await instance.acquireTokenRedirect(loginRequest);
@@ -82,29 +81,29 @@ const StoreAppContent: React.FC = () => {
   }, [isM365, accounts, instance]);
 
   useEffect(() => {
-    loadStats();
+    if (db) loadStats();
   }, [db, activeProfile]);
 
   const loadStats = async () => {
     try {
-      const allReqs = await db.getRequests();
-      const allItems = await db.getItems();
+      const allReqs: StoreRequest[] = await db.getRequests();
+      const allItems: ItemMaster[] = await db.getItems();
       
       // Calculate statistics
-      const pending = allReqs.filter(r => r.status.startsWith('Pending_')).length;
-      const lowStock = allItems.filter(i => i.stockOnHand <= i.reorderLevel).length;
-      const completed = allReqs.filter(r => r.status === 'Completed').length;
+      const pending = allReqs.filter((r: StoreRequest) => r.status.startsWith('Pending_')).length;
+      const lowStock = allItems.filter((i: ItemMaster) => i.stockOnHand <= i.reorderLevel).length;
+      const completed = allReqs.filter((r: StoreRequest) => r.status === 'Completed').length;
       
       // Get total amount issued/processed for requester or global based on admin
       let totalAmount = 0;
       if (activeProfile.role === 'Admin' || activeProfile.role === 'Storekeeper' || activeProfile.role === 'Finance') {
         totalAmount = allReqs
-          .filter(r => r.status === 'Completed')
-          .reduce((sum, r) => sum + r.totalAmount, 0);
+          .filter((r: StoreRequest) => r.status === 'Completed')
+          .reduce((sum: number, r: StoreRequest) => sum + (r.totalAmount || 0), 0);
       } else {
         totalAmount = allReqs
-          .filter(r => r.requesterEmail.toLowerCase() === activeProfile.email.toLowerCase() && r.status === 'Completed')
-          .reduce((sum, r) => sum + r.totalAmount, 0);
+          .filter((r: StoreRequest) => r.requesterEmail.toLowerCase() === activeProfile.email.toLowerCase() && r.status === 'Completed')
+          .reduce((sum: number, r: StoreRequest) => sum + (r.totalAmount || 0), 0);
       }
 
       setStats({
@@ -171,7 +170,7 @@ const StoreAppContent: React.FC = () => {
     setActiveProfile({
       name: account.name || account.username,
       email: account.username,
-      role: activeRole
+      role: activeRole as any
     });
   };
 
@@ -209,13 +208,6 @@ const StoreAppContent: React.FC = () => {
     initializeDB();
     setDb(getDB());
     // reload the page to apply MSAL configurations correctly
-    window.location.reload();
-  };
-
-  const handleSwitchToDemoMode = () => {
-    const config = getM365Config();
-    config.isEnabled = false;
-    saveM365Config(config);
     window.location.reload();
   };
 
@@ -408,8 +400,6 @@ const StoreAppContent: React.FC = () => {
             </div>
           </>
         )}
-      </main>
-
       </main>
     </div>
   );
