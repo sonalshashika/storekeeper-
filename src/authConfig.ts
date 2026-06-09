@@ -29,7 +29,7 @@ export const msalConfig: Configuration = {
     postLogoutRedirectUri: window.location.origin,
   },
   cache: {
-    cacheLocation: "sessionStorage"
+    cacheLocation: "localStorage" // Changed from sessionStorage to localStorage to persist sessions
   }
 };
 
