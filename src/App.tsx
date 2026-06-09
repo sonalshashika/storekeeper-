@@ -12,7 +12,7 @@ import {
   initializeDB 
 } from './services/storeService';
 import type { UserProfile } from './types';
-import { RoleSwitcher, MOCK_PROFILES } from './components/RoleSwitcher';
+import { RoleSwitcher } from './components/RoleSwitcher';
 import { RequesterDashboard } from './components/RequesterDashboard';
 import { ApproverDashboard } from './components/ApproverDashboard';
 import { StorekeeperDashboard } from './components/StorekeeperDashboard';
@@ -32,12 +32,11 @@ import {
 
 // Inner App with MSAL Context
 const StoreAppContent: React.FC = () => {
-  const [activeProfile, setActiveProfile] = useState<UserProfile>(MOCK_PROFILES[0]);
+  const [activeProfile, setActiveProfile] = useState<UserProfile>({ name: '', email: '', role: 'Requester' });
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [db, setDb] = useState(getDB());
+  const [db, setDb] = useState<any>(null); // DB will be set after M365 auth
   const [m365User, setM365User] = useState<string | null>(null);
   const [m365UserRoles, setM365UserRoles] = useState<string[]>(['Requester']);
-  const [simulatedEmails, setSimulatedEmails] = useState<{ id: string; to: string; subject: string; htmlContent: string; timestamp: string }[]>([]);
 
   // Statistics
   const [stats, setStats] = useState({
@@ -53,22 +52,6 @@ const StoreAppContent: React.FC = () => {
   useEffect(() => {
     document.body.setAttribute('data-theme', theme);
   }, [theme]);
-
-  // Poll simulated emails in offline mode
-  useEffect(() => {
-    if (!isM365) {
-      const interval = setInterval(() => {
-        const stored = localStorage.getItem('m365_simulated_emails');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed.length !== simulatedEmails.length) {
-            setSimulatedEmails(parsed);
-          }
-        }
-      }, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [isM365, simulatedEmails.length]);
 
   useEffect(() => {
     // Register the MSAL token acquisition if M365 is enabled
@@ -91,15 +74,10 @@ const StoreAppContent: React.FC = () => {
       };
 
       registerTokenProvider(tokenAcquisition);
-      initializeDB();
       setDb(getDB());
       
       // Load user profile and resolve role dynamically
       resolveM365UserRole(activeAccount);
-    } else {
-      // Offline mode
-      initializeDB();
-      setDb(getDB());
     }
   }, [isM365, accounts, instance]);
 
@@ -220,7 +198,7 @@ const StoreAppContent: React.FC = () => {
       await instance.logoutRedirect();
       setM365User(null);
       // Reset local profile
-      setActiveProfile(MOCK_PROFILES[0]);
+      setActiveProfile({ name: '', email: '', role: 'Requester' });
     } catch (e) {
       console.error("Logout redirect failed", e);
     }
@@ -377,14 +355,6 @@ const StoreAppContent: React.FC = () => {
               <button className="btn btn-primary btn-accent" onClick={handleM365Login} style={{ padding: '10px 24px' }}>
                 Sign In with Microsoft 365
               </button>
-              <button 
-                type="button"
-                className="btn btn-secondary" 
-                onClick={handleSwitchToDemoMode} 
-                style={{ padding: '10px 24px', background: 'rgba(255,255,255,0.05)' }}
-              >
-                Switch back to Offline Demo Mode
-              </button>
             </div>
           </div>
         )}
@@ -440,64 +410,7 @@ const StoreAppContent: React.FC = () => {
         )}
       </main>
 
-      {/* Floating Notification Center for Simulated Emails */}
-      {simulatedEmails.length > 0 && (
-        <div style={{
-          position: 'fixed',
-          bottom: '24px',
-          right: '24px',
-          zIndex: 1000,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '12px',
-          maxWidth: '380px',
-          width: '90%'
-        }}>
-          {simulatedEmails.slice(-3).reverse().map(email => (
-            <div key={email.id} className="glass-panel" style={{
-              background: 'rgba(15, 23, 42, 0.95)',
-              border: '1px solid var(--secondary)',
-              boxShadow: 'var(--shadow-lg)',
-              padding: '16px',
-              borderRadius: '8px',
-              color: '#fff'
-            }}>
-              <div className="flex justify-between align-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '8px', marginBottom: '8px' }}>
-                <strong style={{ color: 'var(--secondary)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  ✉️ Simulated Email Sent
-                </strong>
-                <button 
-                  style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '16px', fontWeight: 'bold' }}
-                  onClick={() => {
-                    const updated = simulatedEmails.filter(e => e.id !== email.id);
-                    setSimulatedEmails(updated);
-                    localStorage.setItem('m365_simulated_emails', JSON.stringify(updated));
-                  }}
-                >
-                  &times;
-                </button>
-              </div>
-              <div style={{ fontSize: '12px', lineHeight: 1.4 }}>
-                <div style={{ marginBottom: '2px' }}><strong>To:</strong> <code style={{ color: 'var(--secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 4px', borderRadius: '3px' }}>{email.to}</code></div>
-                <div style={{ marginBottom: '6px' }}><strong>Subject:</strong> <span style={{ fontWeight: 500 }}>{email.subject}</span></div>
-                <div 
-                  style={{ 
-                    padding: '8px', 
-                    background: 'rgba(0,0,0,0.3)', 
-                    borderRadius: '4px', 
-                    fontSize: '11px',
-                    maxHeight: '100px',
-                    overflowY: 'auto',
-                    borderLeft: '2px solid var(--primary)',
-                    color: 'rgba(255,255,255,0.85)'
-                  }}
-                  dangerouslySetInnerHTML={{ __html: email.htmlContent }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      </main>
     </div>
   );
 };

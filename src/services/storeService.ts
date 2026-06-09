@@ -1,9 +1,8 @@
 import type { StoreDB } from './dbInterface';
-import { LocalStoreDB } from './localDB';
 import { GraphStoreDB } from './graphDB';
 import type { M365Config } from '../types';
 
-let currentDb: StoreDB = new LocalStoreDB();
+let currentDb: StoreDB | null = null;
 let tokenProvider: (() => Promise<string>) | null = null;
 
 const CONFIG_KEY = 'm365_graph_config';
@@ -39,20 +38,24 @@ export const registerTokenProvider = (provider: () => Promise<string>): void => 
 
 export const initializeDB = (): void => {
   const config = getM365Config();
-  if (config.isEnabled && config.siteId && tokenProvider) {
+  if (config.siteId && tokenProvider) {
     currentDb = new GraphStoreDB(config.siteId, tokenProvider);
     console.log("StoreApp: Initialized Microsoft Graph SharePoint DB provider.");
   } else {
-    currentDb = new LocalStoreDB();
-    console.log("StoreApp: Initialized LocalStorage Simulation DB provider.");
+    console.warn("StoreApp: M365 Config missing siteId or tokenProvider. Database uninitialized.");
+    currentDb = null;
   }
 };
 
 // Export active DB accessor
 export const getDB = (): StoreDB => {
+  if (!currentDb) {
+    throw new Error("StoreDB not initialized. Please ensure M365 login and site configuration is completed.");
+  }
   return currentDb;
 };
 
 export const isM365Mode = (): boolean => {
-  return getM365Config().isEnabled;
+  return true; // Always M365 now
 };
+

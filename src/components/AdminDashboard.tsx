@@ -384,17 +384,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ db, onConfigChan
   };
 
   const handleResetDB = async () => {
-    const isM365 = config.isEnabled;
-    const confirmMsg = isM365 
-      ? 'WARNING: This will delete ALL items in your live SharePoint lists (requests, catalog, transactions, divisions). This cannot be undone. Continue?'
-      : 'This will wipe all LocalStorage edits and reseed the default test database. Continue?';
+    const confirmMsg = 'WARNING: This will delete ALL items in your live SharePoint lists (requests, catalog, transactions, divisions). This cannot be undone. Continue?';
       
     if (confirm(confirmMsg)) {
       setLoading(true);
-      setConfigStatus({ type: 'success', text: isM365 ? 'Clearing SharePoint list items...' : 'Resetting local database...' });
+      setConfigStatus({ type: 'success', text: 'Clearing SharePoint list items...' });
       try {
         await db.resetDatabase();
-        alert(isM365 ? 'SharePoint lists cleared successfully.' : 'Local database reset successful.');
+        alert('SharePoint lists cleared successfully.');
         await loadData();
       } catch (e: any) {
         alert(`Reset failed: ${e.message || e.toString()}`);
@@ -938,21 +935,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ db, onConfigChan
             </h3>
 
             <form onSubmit={handleConfigSave} className="flex-column gap-sm">
-              <div className="form-group flex-column" style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                <label className="flex align-center gap-sm" style={{ cursor: 'pointer', fontWeight: 600 }}>
-                  <input 
-                    type="checkbox" 
-                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                    checked={config.isEnabled}
-                    onChange={(e) => setConfig({ ...config, isEnabled: e.target.checked })}
-                  />
-                  <span>Enable M365 SharePoint Graph Backend Connection</span>
-                </label>
-                <span className="text-muted" style={{ fontSize: '11px', marginLeft: '26px', marginTop: '4px' }}>
-                  If checked, the application switches storage from LocalStorage simulation to real SharePoint lists via MS Graph API. Requires MSAL credentials below.
-                </span>
-              </div>
-
               <div className="form-group">
                 <label>Azure AD Application (Client) ID</label>
                 <input 
@@ -960,9 +942,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ db, onConfigChan
                   placeholder="e.g. e5a18a5e-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                   className="form-control" 
                   value={config.clientId} 
-                  disabled={!config.isEnabled}
                   onChange={(e) => setConfig({ ...config, clientId: e.target.value })} 
-                  required={config.isEnabled}
+                  required
                 />
               </div>
 
@@ -973,9 +954,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ db, onConfigChan
                   placeholder="e.g. b8f45a8e-xxxx-xxxx-xxxx-xxxxxxxxxxxx (or 'common')"
                   className="form-control" 
                   value={config.tenantId} 
-                  disabled={!config.isEnabled}
                   onChange={(e) => setConfig({ ...config, tenantId: e.target.value })} 
-                  required={config.isEnabled}
+                  required
                 />
               </div>
 
@@ -987,17 +967,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ db, onConfigChan
                     placeholder="e.g. companyname.sharepoint.com:/sites/Storekeeper"
                     className="form-control" 
                     value={config.siteUrl} 
-                    disabled={!config.isEnabled}
                     onChange={(e) => setConfig({ ...config, siteUrl: e.target.value })} 
-                    required={config.isEnabled}
+                    required
                   />
-                  <button 
-                    type="button" 
-                    className="btn btn-secondary" 
-                    style={{ fontSize: '13px', padding: '10px' }}
-                    disabled={!config.isEnabled || !config.siteUrl}
-                    onClick={handleLookupSiteId}
-                  >
+                  <button type="button" className="btn btn-secondary" onClick={handleLookupSiteId}>
                     Resolve ID
                   </button>
                 </div>
@@ -1051,36 +1024,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ db, onConfigChan
 
               <button 
                 className="btn btn-secondary margin-top-md" 
-                disabled={!config.isEnabled || !config.siteId || provisioning}
+                disabled={!config.siteId || provisioning}
                 onClick={handleProvisionLists}
-                style={{ background: 'rgba(255,255,255,0.05)', opacity: (!config.isEnabled || !config.siteId) ? 0.5 : 1 }}
+                style={{ background: 'rgba(255,255,255,0.05)', opacity: !config.siteId ? 0.5 : 1 }}
               >
                 {provisioning ? 'Deploying List Schemas...' : 'Deploy SharePoint Lists'}
               </button>
 
               <button 
                 className="btn btn-secondary margin-top-sm" 
-                disabled={!config.isEnabled || !config.siteId || seeding}
+                disabled={!config.siteId || seeding}
                 onClick={handleSeedM365Data}
-                style={{ background: 'rgba(255,255,255,0.05)', opacity: (!config.isEnabled || !config.siteId) ? 0.5 : 1 }}
+                style={{ background: 'rgba(255,255,255,0.05)', opacity: !config.siteId ? 0.5 : 1 }}
               >
                 {seeding ? 'Seeding Default Data...' : 'Seed Default Catalog & Divisions'}
               </button>
 
               <button 
                 className="btn btn-secondary margin-top-sm" 
-                disabled={!config.isEnabled || !config.siteId || runningDiagnostics}
+                disabled={!config.siteId || runningDiagnostics}
                 onClick={handleRunDiagnostics}
-                style={{ background: 'rgba(255,255,255,0.05)', opacity: (!config.isEnabled || !config.siteId) ? 0.5 : 1 }}
+                style={{ background: 'rgba(255,255,255,0.05)', opacity: !config.siteId ? 0.5 : 1 }}
               >
                 {runningDiagnostics ? 'Checking SharePoint Schema...' : 'Check SharePoint Schema (Diagnostics)'}
               </button>
-              
-              {!config.isEnabled && (
-                <p style={{ color: 'hsl(35, 95%, 60%)', fontSize: '12px', marginTop: '8px', lineHeight: '1.4' }}>
-                  ⚠️ Check "Enable M365...", click "Save & Load M365 Mode", and sign in with your corporate account first to activate these deployment buttons.
-                </p>
-              )}
             </div>
 
             <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
