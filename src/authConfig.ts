@@ -25,8 +25,8 @@ export const msalConfig: Configuration = {
   auth: {
     clientId: saved?.clientId || "00000000-0000-0000-0000-000000000000",
     authority: `https://login.microsoftonline.com/${saved?.tenantId || "common"}`,
-    redirectUri: window.location.origin,
-    postLogoutRedirectUri: window.location.origin,
+    redirectUri: window.location.origin + import.meta.env.BASE_URL,
+    postLogoutRedirectUri: window.location.origin + import.meta.env.BASE_URL,
   },
   cache: {
     cacheLocation: "localStorage" // Changed from sessionStorage to localStorage to persist sessions
